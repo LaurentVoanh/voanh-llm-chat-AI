@@ -38,6 +38,50 @@ define('MAX_HISTORY_MESSAGES', 15);
 define('MEMORY_LIMIT', 8);
 define('CRITIC_THRESHOLD', 7.0);
 
+// Configuration des agents spécialisés
+$AGENT_CONFIGS = [
+    'philosopher' => [
+        'model' => MODEL_CHAT_PHILOSOPHER,
+        'key_slot' => 1,
+        'temperature_base' => 0.8,
+        'triggers' => ['philosophie', 'sens', 'existence', 'pourquoi', 'vie', 'mort', 'âme', 'conscience', 'vérité', 'sagesse', 'réflexion', 'penser', 'comprendre', 'signification'],
+        'priority_boost' => ['kpi_sens' => ['threshold' => 50, 'boost' => 3]],
+        'system_prompt_template' => 'philosopher'
+    ],
+    'coach' => [
+        'model' => MODEL_CHAT_COACH,
+        'key_slot' => 1,
+        'temperature_base' => 0.6,
+        'triggers' => ['objectif', 'action', 'plan', 'motivation', 'défi', 'projet', 'réussir', 'ambition', 'discipline', 'habitude', 'progresser', 'améliorer'],
+        'priority_boost' => ['kpi_travail' => ['threshold' => 50, 'boost' => 3], 'kpi_action' => ['threshold' => 40, 'boost' => 2]],
+        'system_prompt_template' => 'coach'
+    ],
+    'analyst' => [
+        'model' => MODEL_CHAT_ANALYST,
+        'key_slot' => 2,
+        'temperature_base' => 0.4,
+        'triggers' => ['analyse', 'explique', 'comprendre', 'décrypter', 'système', 'structure', 'mécanisme', 'fonctionnement', 'cause', 'conséquence', 'logique', 'raison'],
+        'priority_boost' => ['kpi_intelligence' => ['threshold' => 60, 'boost' => 2]],
+        'system_prompt_template' => 'analyst'
+    ],
+    'merchant' => [
+        'model' => MODEL_CHAT_MERCHANT,
+        'key_slot' => 1,
+        'temperature_base' => 0.5,
+        'triggers' => ['achat', 'prix', 'produit', 'boutique', 'offre', 'promotion', 'commande', 'livraison', 'paiement', 'client', 'vente', 'business', 'revenu'],
+        'priority_boost' => ['kpi_richesse' => ['threshold' => 50, 'boost' => 3]],
+        'system_prompt_template' => 'merchant'
+    ],
+    'therapist' => [
+        'model' => MODEL_CHAT_THERAPIST,
+        'key_slot' => 1,
+        'temperature_base' => 0.7,
+        'triggers' => ['triste', 'angoisse', 'problème', 'aide', 'stress', 'anxiété', 'peur', 'doute', 'dépression', 'solitude', 'colère', 'émotion', 'sentiment', 'blessure', 'trauma'],
+        'priority_boost' => ['kpi_bonheur' => ['threshold' => 40, 'boost' => 4], 'kpi_confiance' => ['threshold' => 30, 'boost' => 3]],
+        'system_prompt_template' => 'therapist'
+    ]
+];
+
 session_start();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -261,6 +305,14 @@ function routeToAgent($message, $user_context, $db) {
     $scores = [];
     $message_lower = strtolower($message);
     
+    // Détection des salutations et cas simples
+    $greetings = ['salut', 'bonjour', 'hello', 'coucou', 'hey', 'hi', 'yo', 'bienvenue', 'content', 'ravi'];
+    foreach ($greetings as $greet) {
+        if (stripos($message_lower, $greet) !== false) {
+            return 'philosopher'; // Agent par défaut pour les salutations
+        }
+    }
+    
     // Score chaque agent selon les triggers
     foreach ($AGENT_CONFIGS as $name => $config) {
         $score = 0;
@@ -306,8 +358,13 @@ function routeToAgent($message, $user_context, $db) {
     arsort($scores);
     $best_agent = key($scores);
     
-    // Si score trop bas → agent généraliste
-    if (!isset($scores[$best_agent]) || $scores[$best_agent] < 2) {
+    // Si score trop bas ou agent non trouvé → philosopher par défaut
+    if (!isset($best_agent) || !isset($scores[$best_agent]) || $scores[$best_agent] < 1) {
+        $best_agent = 'philosopher';
+    }
+    
+    // Vérifier que l'agent existe dans la config
+    if (!isset($AGENT_CONFIGS[$best_agent])) {
         $best_agent = 'philosopher';
     }
     
@@ -750,7 +807,9 @@ if ($action === 'chat') {
     $response = callMistral($api_messages, $agent_config['key_slot'], $agent_config['model'], 1400, $temperature, API_TIMEOUT);
     
     if (!$response || !isset($response['choices'][0]['message']['content'])) {
-        echo json_encode(['error' => 'Reconnexion galactique en cours...', 'raw' => $response]);
+        $error_detail = $response['message'] ?? 'Response vide ou malformed';
+        error_log("Mistral API Error: " . json_encode($response));
+        echo json_encode(['error' => 'Échec de la connexion IA: ' . $error_detail, 'debug' => $response]);
         exit;
     }
     
