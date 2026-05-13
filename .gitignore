@@ -1,1 +1,1 @@
-Nothing should be ignored based on the provided file changes. The modified files (`api/mistral.php`, `index.php`) are source code files that should not be added to .gitignore.
+Nothing should be ignored based on the provided file changes. The modification of 'api/mistral.php' is a source code file that should not be added to .gitignore.
