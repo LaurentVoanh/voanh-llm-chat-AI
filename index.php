@@ -446,6 +446,33 @@ html, body {
     letter-spacing: 0.5px;
 }
 
+/* BRANCHES CONVERSATIONNELLES */
+.branches-bar {
+    padding: 8px 10px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+    border-top: 1px solid rgba(255,215,0,0.2);
+    border-bottom: 1px solid rgba(255,215,0,0.2);
+    background: rgba(255,215,0,0.05);
+}
+.branch-btn {
+    background: rgba(255,215,0,0.1);
+    border: 1px solid var(--neon-gold);
+    color: var(--neon-gold);
+    font-family: var(--font-data);
+    font-size: 12px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+}
+.branch-btn:hover {
+    background: var(--neon-gold);
+    color: #ffffff;
+}
+
 /* ======== PAGE OPGA ======== */
 #page-opga { padding: 15px; gap: 12px; }
 
@@ -698,8 +725,14 @@ html, body {
                 <div class="suggestions-bar" id="suggestions-bar">
                     <!-- Les suggestions seront injectées ici -->
                 </div>
+                <div class="branches-bar" id="branches-bar" style="display:none;">
+                    <!-- Les branches conversationnelles seront injectées ici -->
+                </div>
                 <div class="refinements-bar" id="refinements-bar">
                     <!-- Les cases à cocher d'affinage seront injectées ici -->
+                </div>
+                <div class="user-level-display" id="user-level-display" style="padding:5px 10px;background:rgba(255,215,0,0.05);border-top:1px solid rgba(255,215,0,0.2);display:flex;align-items:center;justify-content:space-between;">
+                    <!-- Niveau utilisateur -->
                 </div>
                 <div class="chat-input-bar">
                     <input type="text" class="chat-input" id="chat-input" placeholder="Transmission de pensée...">
@@ -1121,15 +1154,27 @@ async function sendMessage() {
     // Construire l'objet refinements à envoyer (toutes les cases cochées)
     const refinementsObj = { ...userRefinements };
     
+    const startTime = Date.now();
     const res = await apiPost('api/mistral.php', { 
         action: 'chat', 
         message: text,
-        refinements: refinementsObj   // envoi des affinages
+        refinements: refinementsObj
     });
+    const readTime = Date.now() - startTime;
+    
     removeTyping();
     
     if (res.success) {
-        addMsg('clone', '🔴   ELVITA [PREMIUM]', res.message);
+        addMsg('clone', '🔴   ELVITA [' + (res.agent_used || 'PREMIUM') + ']', res.message);
+        
+        // Stocker l'ID du dernier message pour feedback
+        window.lastMessageId = res.message_id || null;
+        window.lastAgentUsed = res.agent_used || '';
+        
+        // Track long read time pour RL
+        if (readTime > 15000 && window.lastMessageId) {
+            trackFeedback(window.lastMessageId, 'long_read_time', window.lastAgentUsed);
+        }
         
         // Mettre à jour KPIs si retournés
         if (res.kpis) {
@@ -1138,23 +1183,87 @@ async function sendMessage() {
             renderProfilKPIs();
         }
         
-        // Mise à jour suggestions et checkboxes
+        // Mise à jour suggestions
         if (res.suggestions && Array.isArray(res.suggestions)) {
             updateSuggestionsUI(res.suggestions);
         }
-        if (res.checkboxes && Array.isArray(res.checkboxes)) {
-            currentCheckboxes = res.checkboxes;
-            updateRefinementsUI();
+        
+        // Mise à jour branches conversationnelles
+        if (res.branches && Array.isArray(res.branches)) {
+            updateBranchesUI(res.branches);
+        }
+        
+        // Afficher info niveau utilisateur
+        if (res.level_info) {
+            updateUserLevelDisplay(res.level_info);
+        }
+        
+        // Info critic score
+        if (res.critic_score !== null && res.critic_score !== undefined) {
+            console.log('Critic Score:', res.critic_score, '| Regenerated:', res.was_regenerated);
         }
         
         // Mise à jour ticker si OPGA détectée
         if (res.opga_detected) {
             toast('⚡ OPGA/OPGV AUTO-DÉTECTÉE ET ENREGISTRÉE');
-           // loadOPGA();
         }
     } else {
         addMsg('clone', '🔴 SYSTÈME', 'Reformulez votre demande : ' + (res.error || 'Inconnue'));
     }
+}
+
+// Track feedback implicite pour apprentissage par renforcement
+async function trackFeedback(messageId, interactionType, agent = '') {
+    if (!messageId) return;
+    try {
+        await apiPost('api/mistral.php', {
+            action: 'track_feedback',
+            message_id: messageId,
+            type: interactionType,
+            agent: agent
+        });
+    } catch(e) {}
+}
+
+// Afficher branches conversationnelles
+function updateBranchesUI(branches) {
+    const container = document.getElementById('branches-bar');
+    if (!container) return;
+    
+    if (!branches || branches.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    container.innerHTML = branches.map(b => `
+        <button class="branch-btn" onclick="useBranch('${escHtml(b.prompt).replace(/'/g, "\\'")}')">
+            ${escHtml(b.label)}
+        </button>
+    `).join('');
+}
+
+function useBranch(prompt) {
+    const input = document.getElementById('chat-input');
+    input.value = prompt;
+    sendMessage();
+    if (window.lastMessageId) {
+        trackFeedback(window.lastMessageId, 'click_branch', window.lastAgentUsed);
+    }
+}
+
+// Afficher niveau utilisateur
+function updateUserLevelDisplay(levelInfo) {
+    const levelEl = document.getElementById('user-level-display');
+    if (!levelEl) return;
+    
+    levelEl.innerHTML = `
+        <span style="font-family:var(--font-hud);font-size:11px;color:var(--neon-gold);">
+            NIV ${levelInfo.level} - ${levelInfo.title}
+        </span>
+        <div style="width:100px;height:4px;background:rgba(255,215,0,0.2);margin-top:3px;border-radius:2px;">
+            <div style="width:${levelInfo.progress_percent}%;height:100%;background:var(--neon-gold);border-radius:2px;"></div>
+        </div>
+    `;
 }
 
 // Entrée clavier
